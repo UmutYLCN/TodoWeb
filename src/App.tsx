@@ -152,6 +152,26 @@ export default function App() {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }
 
+  function updateTitle(id: string, next: string) {
+    const title = next.trim();
+    if (!title) return;
+    const current = tasks.find((t) => t.id === id);
+    if (!current) return;
+    // Günlükten türeyen bir kart düzenleniyorsa: hem şablonu hem de aynı şablondan gelen
+    // tüm mevcut kartların başlığını güncelle.
+    if (current.origin === 'daily' && current.originId) {
+      setDailyItems((prev) => prev.map((d) => (d.id === current.originId ? { ...d, title } : d)));
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.origin === 'daily' && t.originId === current.originId ? { ...t, title } : t.id === id ? { ...t, title } : t
+        )
+      );
+    } else {
+      // Normal kart: sadece kendisini güncelle
+      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
+    }
+  }
+
   function addDaily() {
     const trimmed = dailyTitle.trim();
     if (!trimmed) return;
@@ -196,12 +216,29 @@ export default function App() {
     const { active, over } = event;
     if (!over) return;
     const target = over.id as Status | string;
+    // Dropped on a column: just change status
     if (target === 'todo' || target === 'in_progress' || target === 'completed') {
       const id = String(active.id);
       const moved = tasks.find((t) => t.id === id);
       if (moved && moved.status !== target) {
         updateStatus(id, target);
       }
+    } else {
+      // Dropped on another card: reorder and possibly move to that card's column
+      const activeId = String(active.id);
+      const overTask = tasks.find((t) => t.id === String(target));
+      if (!overTask) return;
+      setTasks((prev) => {
+        const fromIndex = prev.findIndex((t) => t.id === activeId);
+        if (fromIndex === -1) return prev;
+        const item = { ...prev[fromIndex], status: overTask.status } as Task;
+        const arr = prev.slice();
+        arr.splice(fromIndex, 1);
+        let toIndex = arr.findIndex((t) => t.id === overTask.id);
+        if (toIndex < 0) toIndex = 0;
+        arr.splice(toIndex, 0, item);
+        return arr;
+      });
     }
     setActiveId(null);
   }
@@ -261,12 +298,17 @@ export default function App() {
                     key={t.id}
                     task={t}
                     onRemove={() => removeTask(t.id)}
+                    onUpdateTitle={(next) => updateTitle(t.id, next)}
                     activeId={activeId}
                   />
                 ))}
                 {grouped[s.key].length === 0 && (
                   <p className="select-none rounded-md border border-dashed border-slate-300 p-6 text-center text-xs text-slate-400">
-                    Sürükleyip bırak veya yeni görev ekle
+                    {s.key === 'in_progress'
+                      ? 'Henüz devam eden görev yok. To Do’dan buraya taşıyarak başlat.'
+                      : s.key === 'completed'
+                      ? 'Henüz tamamlanan görev yok. Görevleri tamamladığında burada görünecek.'
+                      : 'Sürükleyip bırak veya yeni görev ekle'}
                   </p>
                 )}
               </KanbanColumn>
@@ -414,62 +456,99 @@ function CardGhost({ task }: { task: Task }) {
 const TaskCard = memo(function TaskCard({
   task,
   onRemove,
+  onUpdateTitle,
   activeId,
 }: {
   task: Task;
   onRemove: () => void;
+  onUpdateTitle: (next: string) => void;
   activeId: string | null;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id });
+  const { attributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({ id: task.id });
+  const { setNodeRef: setDropRef } = useDroppable({ id: task.id });
   const isActive = activeId === task.id;
   const style = transform && !isActive
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, willChange: 'transform' as const }
     : { willChange: 'auto' as const };
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const [editing, setEditing] = useState(false);
+  const [temp, setTemp] = useState(task.title);
+  useEffect(() => {
+    if (!editing) setTemp(task.title);
+  }, [task.title, editing]);
+  const commit = () => {
+    const v = temp.trim();
+    if (v && v !== task.title) onUpdateTitle(v);
+    setEditing(false);
+  };
+  const cancel = () => {
+    setTemp(task.title);
+    setEditing(false);
+  };
 
   return (
-    <article
-      ref={setNodeRef}
-      style={style}
-      className={
-        'group select-none rounded-xl p-4 shadow-sm transition ' +
-        'hover:shadow-md cursor-grab active:cursor-grabbing ' +
-        (task.origin === 'daily'
-          ? 'bg-amber-50 border border-amber-300 '
-          : 'bg-white border border-slate-200 ') +
-        (isActive ? 'opacity-0' : isDragging ? 'opacity-70 shadow-lg' : '')
-      }
-    >
-      <div className="flex items-start gap-2">
-        <button
-          className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-grab active:cursor-grabbing"
-          title="Taşı"
-          aria-label="Taşı"
-          {...listeners}
-          {...attributes}
-        >
-          ⋮⋮
-        </button>
-        <h3 className="text-sm font-medium flex-1 leading-5">
-          {task.title}
-        </h3>
-        {task.origin !== 'daily' && (
+    <div ref={setDropRef}>
+      <article
+        ref={setDragRef}
+        style={style}
+        className={
+          'group select-none rounded-xl p-4 shadow-sm transition ' +
+          'hover:shadow-md cursor-grab active:cursor-grabbing ' +
+          (task.origin === 'daily'
+            ? 'bg-amber-50 border border-amber-300 '
+            : 'bg-white border border-slate-200 ') +
+          (isActive ? 'opacity-0' : isDragging ? 'opacity-70 shadow-lg' : '')
+        }
+      >
+        <div className="flex items-center gap-2">
           <button
-            onPointerDown={stop}
-            onMouseDown={stop}
-            onTouchStart={stop}
-            onClick={onRemove}
-            className="rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
-            aria-label="Sil"
-            title="Sil"
+            className="shrink-0 rounded inline-flex h-6 w-6 items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-grab active:cursor-grabbing"
+            title="Taşı"
+            aria-label="Taşı"
+            {...listeners}
+            {...attributes}
           >
-            ✕
+            ⋮⋮
           </button>
-        )}
-      </div>
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
-        <span>Taşımak için sürükle</span>
-      </div>
-    </article>
+          {editing ? (
+            <input
+              className="flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-sky-500"
+              value={temp}
+              onChange={(e) => setTemp(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit();
+                if (e.key === 'Escape') cancel();
+              }}
+              onBlur={commit}
+              autoFocus
+              onPointerDown={stop}
+              onMouseDown={stop}
+              onTouchStart={stop}
+            />
+          ) : (
+            <h3
+              className="flex-1 text-sm font-medium leading-none"
+              onDoubleClick={() => setEditing(true)}
+            >
+              {task.title}
+            </h3>
+          )}
+          {task.origin !== 'daily' && (
+            <button
+              onPointerDown={stop}
+              onMouseDown={stop}
+              onTouchStart={stop}
+              onClick={onRemove}
+              className="rounded inline-flex h-6 w-6 items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50"
+              aria-label="Sil"
+              title="Sil"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {/* Static drag hint removed; DragOverlay shows "Taşınıyor…" while dragging */}
+      </article>
+    </div>
   );
 });
