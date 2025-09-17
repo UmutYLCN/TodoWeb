@@ -1,0 +1,15 @@
+# dependencies
+node_modules
+
+# build outputs
+dist
+
+# env
+.env
+.env.*
+
+# misc
+.DS_Store
+*.log
+.vscode
+EOF && git status --porcelain -b
