@@ -439,15 +439,23 @@ function AddPanel({
 }
 
 function CardGhost({ task }: { task: Task }) {
-  const base =
-    'pointer-events-none select-none rounded-xl p-4 shadow-lg border ';
+  const base = 'pointer-events-none select-none rounded-xl p-4 shadow-lg border ';
   const tone =
-    task.origin === 'daily'
+    task.status === 'completed'
+      ? 'bg-emerald-50 border-emerald-300'
+      : task.origin === 'daily'
       ? 'bg-amber-50 border-amber-300'
       : 'bg-white border-slate-200';
   return (
     <article className={base + tone}>
-      <h3 className="text-sm font-medium leading-5">{task.title}</h3>
+      <div className="flex items-center gap-2">
+        {task.status === 'completed' && (
+          <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs border border-emerald-300">✓</span>
+        )}
+        <h3 className={'text-sm font-medium ' + (task.status === 'completed' ? 'text-slate-500 line-through' : '')}>
+          {task.title}
+        </h3>
+      </div>
       <div className="mt-2 text-[11px] text-slate-400">Taşınıyor…</div>
     </article>
   );
@@ -493,47 +501,54 @@ const TaskCard = memo(function TaskCard({
         style={style}
         className={
           'group select-none rounded-xl p-4 shadow-sm transition ' +
-          'hover:shadow-md cursor-grab active:cursor-grabbing ' +
-          (task.origin === 'daily'
+          'hover:shadow-md ' +
+          (task.status === 'completed'
+            ? 'bg-emerald-50 border border-emerald-300 '
+            : task.origin === 'daily'
             ? 'bg-amber-50 border border-amber-300 '
             : 'bg-white border border-slate-200 ') +
+          (task.status === 'in_progress' ? ' relative ' : '') +
           (isActive ? 'opacity-0' : isDragging ? 'opacity-70 shadow-lg' : '')
         }
       >
+        {task.status === 'in_progress' && (
+          <div className="pointer-events-none absolute inset-0 inprogress-ants" />
+        )}
         <div className="flex items-center gap-2">
-          <button
-            className="shrink-0 rounded inline-flex h-6 w-6 items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-grab active:cursor-grabbing"
-            title="Taşı"
-            aria-label="Taşı"
-            {...listeners}
-            {...attributes}
-          >
-            ⋮⋮
-          </button>
-          {editing ? (
-            <input
-              className="flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-sky-500"
-              value={temp}
-              onChange={(e) => setTemp(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commit();
-                if (e.key === 'Escape') cancel();
-              }}
-              onBlur={commit}
-              autoFocus
-              onPointerDown={stop}
-              onMouseDown={stop}
-              onTouchStart={stop}
-            />
-          ) : (
-            <h3
-              className="flex-1 text-sm font-medium leading-none"
-              onDoubleClick={() => setEditing(true)}
-            >
-              {task.title}
-            </h3>
+          {task.status === 'completed' && (
+            <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs border border-emerald-300" title="Tamamlandı">✓</span>
           )}
-          {task.origin !== 'daily' && (
+          <div className="flex-1 flex items-center gap-2 min-w-0">
+            {editing ? (
+              <input
+                className="flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-sky-500"
+                value={temp}
+                onChange={(e) => setTemp(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commit();
+                  if (e.key === 'Escape') cancel();
+                }}
+                onBlur={commit}
+                autoFocus
+                onPointerDown={stop}
+                onMouseDown={stop}
+                onTouchStart={stop}
+              />
+            ) : (
+              <h3
+                className={
+                  'flex-1 truncate text-sm font-medium ' +
+                  (task.status === 'completed' ? 'text-slate-500 line-through' : 'text-slate-900')
+                }
+                onDoubleClick={() => setEditing(true)}
+                title={task.title}
+              >
+                {task.title}
+              </h3>
+            )}
+            {/* In Progress spinner removed; bottom sliding bar indicates activity */}
+          </div>
+          {task.status === 'todo' && task.origin !== 'daily' && (
             <button
               onPointerDown={stop}
               onMouseDown={stop}
@@ -546,6 +561,15 @@ const TaskCard = memo(function TaskCard({
               ✕
             </button>
           )}
+          <button
+            className="shrink-0 rounded inline-flex h-6 w-6 items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 cursor-grab active:cursor-grabbing"
+            title="Taşı"
+            aria-label="Taşı"
+            {...listeners}
+            {...attributes}
+          >
+            ⋮⋮
+          </button>
         </div>
         {/* Static drag hint removed; DragOverlay shows "Taşınıyor…" while dragging */}
       </article>

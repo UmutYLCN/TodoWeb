@@ -12,3 +12,35 @@
   scrollbar-color: #cbd5e1 transparent;
 }
 
+/* In Progress: bottom sliding bar */
+@keyframes barSlide {
+  0% {
+    transform: translateX(-30%);
+  }
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+.inprogress-bar {
+  animation: barSlide 1.8s linear infinite;
+}
+
+/* In Progress: animated border around card */
+@keyframes ants {
+  to {
+    background-position: 8px 0, -8px 0, 0 8px, 0 -8px;
+  }
+}
+
+.inprogress-ants {
+  border-radius: 0.75rem; /* match rounded-xl */
+  background:
+    linear-gradient(90deg, rgba(56, 189, 248, 0.8) 50%, transparent 0) top left/8px 2px repeat-x,
+    linear-gradient(90deg, rgba(56, 189, 248, 0.8) 50%, transparent 0) bottom left/8px 2px repeat-x,
+    linear-gradient(0deg, rgba(56, 189, 248, 0.8) 50%, transparent 0) top left/2px 8px repeat-y,
+    linear-gradient(0deg, rgba(56, 189, 248, 0.8) 50%, transparent 0) top right/2px 8px repeat-y;
+  animation: ants 1.2s linear infinite;
+}
+
+/* (removed) In Progress diagonal stripes experimental style */
