@@ -59,6 +59,15 @@ function formatDuration(ms: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function formatMMSS(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  const mm = m.toString().padStart(2, '0');
+  const ss = s.toString().padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
 function transitionTask(t: Task, status: Status, at: number): Task {
   if (t.status === status) {
     if (status === 'in_progress') {
@@ -357,22 +366,34 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b bg-white/70 backdrop-blur sticky top-0 z-10">
-        <div className="mx-auto max-w-screen-2xl px-4 py-4 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Todo</h1>
-          <div className="ml-auto flex items-center gap-2">
-            <button
+      <header className="sticky top-0 z-10 border-b border-slate-200/60 bg-gradient-to-r from-sky-50 via-white to-indigo-50">
+        <div className="mx-auto max-w-screen-2xl px-4 py-3">
+          <div className="flex items-center justify-between rounded-full border border-slate-200/60 bg-white/70 px-4 py-2 shadow-sm backdrop-blur">
+            <div className="w-28" aria-hidden="true" />
+            <h1
+              className="cursor-pointer select-none rounded-full px-4 py-1.5 text-lg font-semibold tracking-wide text-slate-800 hover:bg-white/70"
+              role="button"
+              tabIndex={0}
+              title="Ana sayfaya dön"
               onClick={() => setView('board')}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${view === 'board' ? 'bg-slate-900 text-white' : 'bg-white border border-slate-300 text-slate-700'}`}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setView('board'); } }}
             >
-              Board
-            </button>
-            <button
-              onClick={() => setView('stats')}
-              className={`rounded-md px-3 py-2 text-sm font-medium ${view === 'stats' ? 'bg-slate-900 text-white' : 'bg-white border border-slate-300 text-slate-700'}`}
-            >
-              İstatistikler
-            </button>
+              Todo
+            </h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setView('stats')}
+                className={
+                  'rounded-full px-4 py-1.5 text-sm font-medium transition ' +
+                  (view === 'stats'
+                    ? 'bg-gradient-to-r from-sky-600 to-indigo-600 text-white shadow'
+                    : 'border border-slate-300 bg-white/80 text-slate-700 hover:bg-white')
+                }
+                title="İstatistikler"
+              >
+                İstatistikler
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -568,16 +589,36 @@ function AddPanel({
   removeDaily: (id: string) => void;
   totalMs: number;
 }) {
+  const POMODORO_DEFAULT = 25 * 60 * 1000;
+  const BREAK_DEFAULT = 5 * 60 * 1000;
   return (
     <section className="flex flex-col rounded-xl border bg-white">
       <header className="border-b px-4 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Yeni Görev</h2>
       </header>
-      <div className="flex items-center justify-center py-4">
+      <div className="flex items-center justify-center gap-8 py-4">
         <div className="flex h-40 w-40 items-center justify-center rounded-full bg-white shadow-md ring-4 ring-sky-200">
           <span className="text-2xl leading-none font-semibold text-slate-700 tabular-nums">
             {formatDuration(totalMs)}
           </span>
+        </div>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col items-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow ring-2 ring-sky-200">
+              <span className="text-xs leading-none font-medium text-slate-700 tabular-nums">
+                {formatMMSS(POMODORO_DEFAULT)}
+              </span>
+            </div>
+            <span className="mt-1 text-[11px] text-slate-500">Pomodoro</span>
+          </div>
+          <div className="flex flex-col items-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow ring-2 ring-sky-200">
+              <span className="text-xs leading-none font-medium text-slate-700 tabular-nums">
+                {formatMMSS(BREAK_DEFAULT)}
+              </span>
+            </div>
+            <span className="mt-1 text-[11px] text-slate-500">Dinlenme</span>
+          </div>
         </div>
       </div>
       <div className="p-3 flex flex-col gap-2">
@@ -709,6 +750,8 @@ const TaskCard = memo(function TaskCard({
   };
   const [openSubs, setOpenSubs] = useState(false);
   const [subTitle, setSubTitle] = useState('');
+  const hasSubs = (task.subtasks?.length ?? 0) > 0;
+  const showSubsBlock = task.status === 'todo' || hasSubs;
 
   return (
     <div ref={setDropRef}>
@@ -793,7 +836,11 @@ const TaskCard = memo(function TaskCard({
                 {task.title}
               </h3>
             )}
-            {/* Timer moved next to subtasks toggle */}
+            {task.status === 'in_progress' && task.id === topInProgressId && ((task.subtasks?.length || 0) === 0) && (
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-500">
+                {formatDuration((task.accumulatedMs ?? 0) + (task.startedAt ? now - task.startedAt : 0))}
+              </span>
+            )}
           </div>
           {task.status === 'todo' && task.origin !== 'daily' && (
             <button
@@ -819,6 +866,7 @@ const TaskCard = memo(function TaskCard({
           </button>
         </div>
         {/* Subtasks */}
+        {showSubsBlock && (
         <div className="mt-3">
           <div className="flex items-center justify-between">
             <button
@@ -838,65 +886,77 @@ const TaskCard = memo(function TaskCard({
           </div>
           {openSubs && (
             <div className="mt-2 space-y-2">
-              {(task.subtasks ?? []).length === 0 && (
+              {(task.subtasks ?? []).length === 0 && task.status === 'todo' && (
                 <p className="text-[11px] text-slate-400">Henüz alt görev yok</p>
               )}
-              <ul className="space-y-1">
+              <ul className="space-y-2">
                 {(task.subtasks ?? []).map((s) => (
-                  <li key={s.id} className="flex items-center gap-2 text-sm">
-                    <button
-                      onPointerDown={stop}
-                      onMouseDown={stop}
-                      onTouchStart={stop}
-                      onClick={(e) => { e.stopPropagation(); onToggleSubtask(s.id); }}
-                      className={
-                        'inline-flex h-4 w-4 items-center justify-center rounded border ' +
+                  <li key={s.id} className="flex items-center gap-2 rounded-md border border-dashed border-slate-300 p-2 text-sm">
+                    {task.status === 'todo' || task.status === 'in_progress' ? (
+                      <button
+                        onPointerDown={stop}
+                        onMouseDown={stop}
+                        onTouchStart={stop}
+                        onClick={(e) => { e.stopPropagation(); onToggleSubtask(s.id); }}
+                        className={
+                          'inline-flex h-4 w-4 items-center justify-center rounded-full border ' +
+                          (s.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 text-transparent')
+                        }
+                        aria-label={s.done ? 'Alt görev tamamlandı' : 'Alt görevi tamamla'}
+                      >
+                        ✓
+                      </button>
+                    ) : (
+                      <span className={
+                        'inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border ' +
                         (s.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 text-transparent')
-                      }
-                      aria-label={s.done ? 'Alt görev tamamlandı' : 'Alt görevi tamamla'}
-                    >
-                      ✓
-                    </button>
+                      }>✓</span>
+                    )}
                     <span className={"flex-1 truncate " + (s.done ? 'line-through text-slate-400' : '')}>{s.title}</span>
-                    <button
-                      onPointerDown={stop}
-                      onMouseDown={stop}
-                      onTouchStart={stop}
-                      onClick={(e) => { e.stopPropagation(); onRemoveSubtask(s.id); }}
-                      className="rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                      aria-label="Alt görevi sil"
-                    >
-                      ✕
-                    </button>
+                    {(task.status === 'todo') && (
+                      <button
+                        onPointerDown={stop}
+                        onMouseDown={stop}
+                        onTouchStart={stop}
+                        onClick={(e) => { e.stopPropagation(); onRemoveSubtask(s.id); }}
+                        className="rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                        aria-label="Alt görevi sil"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
-              <div className="flex items-center gap-2">
-                <input
-                  value={subTitle}
-                  onChange={(e) => setSubTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') { onAddSubtask(subTitle); setSubTitle(''); }
-                  }}
-                  onPointerDown={stop}
-                  onMouseDown={stop}
-                  onTouchStart={stop}
-                  placeholder="Alt görev ekle"
-                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-sky-500"
-                />
-                <button
-                  onPointerDown={stop}
-                  onMouseDown={stop}
-                  onTouchStart={stop}
-                  onClick={(e) => { e.stopPropagation(); onAddSubtask(subTitle); setSubTitle(''); }}
-                  className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700"
-                >
-                  Ekle
-                </button>
-              </div>
+              {task.status === 'todo' && (
+                <div className="flex items-center gap-2">
+                  <input
+                    value={subTitle}
+                    onChange={(e) => setSubTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { onAddSubtask(subTitle); setSubTitle(''); }
+                    }}
+                    onPointerDown={stop}
+                    onMouseDown={stop}
+                    onTouchStart={stop}
+                    placeholder="Alt görev ekle"
+                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                  <button
+                    onPointerDown={stop}
+                    onMouseDown={stop}
+                    onTouchStart={stop}
+                    onClick={(e) => { e.stopPropagation(); onAddSubtask(subTitle); setSubTitle(''); }}
+                    className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700"
+                  >
+                    Ekle
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
+        )}
       </article>
     </div>
   );
