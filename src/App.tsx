@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   MouseSensor,
@@ -94,6 +94,8 @@ export default function App() {
   const [panelTitle, setPanelTitle] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const [view, setView] = useState<'board' | 'stats'>('board');
+  const [isBreakActive, setIsBreakActive] = useState(false);
+  const [suppressAutoStart, setSuppressAutoStart] = useState(false);
 
   const sensors = useSensors(
     // Mouse: anında aktivasyon (daha seri his)
@@ -134,6 +136,23 @@ export default function App() {
 
   // Ensure only the topmost non-paused in-progress task runs (others paused or below are stopped)
   useEffect(() => {
+    // If break (rest) timer is active, pause all running task timers
+    if (isBreakActive) {
+      const at = Date.now();
+      let changed = false;
+      const next = tasks.map((t) => {
+        if (t.status === 'in_progress' && t.startedAt) {
+          const acc = (t.accumulatedMs ?? 0) + (t.startedAt ? at - t.startedAt : 0);
+          changed = true;
+          return { ...t, startedAt: null, accumulatedMs: acc };
+        }
+        return t;
+      });
+      if (changed) setTasks(next);
+      return; // do not auto-start any task while on break
+    }
+    // If post-break hold is active, do not auto-start any task (user will start manually or via new pomodoro)
+    if (suppressAutoStart) return;
     const firstInProgress = tasks.find((t) => t.status === 'in_progress' && !t.paused);
     if (!firstInProgress) return; // none running
     const runnerId = firstInProgress.id;
@@ -157,7 +176,7 @@ export default function App() {
       return t;
     });
     if (changed) setTasks(next);
-  }, [tasks]);
+  }, [tasks, isBreakActive, suppressAutoStart]);
 
   // Tick each second to update timers
   useEffect(() => {
@@ -416,7 +435,9 @@ export default function App() {
               addDaily={addDaily}
               dailyItems={dailyItems}
               removeDaily={removeDaily}
-              totalMs={tasks.reduce((sum, t) => sum + (t.accumulatedMs ?? 0) + (t.status === 'in_progress' && t.startedAt ? now - t.startedAt : 0), 0)}
+              totalMs={tasks.reduce((sum, t) => sum + (t.accumulatedMs ?? 0) + (!isBreakActive && t.status === 'in_progress' && t.startedAt ? now - t.startedAt : 0), 0)}
+              onBreakChange={setIsBreakActive}
+              onPostBreakHoldChange={setSuppressAutoStart}
             />
             {STATUSES.map((s) => (
               <KanbanColumn
@@ -441,6 +462,7 @@ export default function App() {
                         const at = Date.now();
                         if (x.paused || !x.startedAt) {
                           // resume
+                          setSuppressAutoStart(false);
                           return { ...x, paused: false, startedAt: at };
                         } else {
                           // pause
@@ -471,7 +493,25 @@ export default function App() {
           </DragOverlay>
         </DndContext>
         ) : (
-          <StatsView tasks={tasks} now={now} />
+          <>
+            {/* Keep timers alive while on Stats by mounting AddPanel hidden */}
+            <div className="sr-only" aria-hidden>
+              <AddPanel
+                title={panelTitle}
+                setTitle={setPanelTitle}
+                addTask={addTaskFromPanel}
+                dailyTitle={dailyTitle}
+                setDailyTitle={setDailyTitle}
+                addDaily={addDaily}
+                dailyItems={dailyItems}
+                removeDaily={removeDaily}
+                totalMs={tasks.reduce((sum, t) => sum + (t.accumulatedMs ?? 0) + (!isBreakActive && t.status === 'in_progress' && t.startedAt ? now - t.startedAt : 0), 0)}
+                onBreakChange={setIsBreakActive}
+                onPostBreakHoldChange={setSuppressAutoStart}
+              />
+            </div>
+            <StatsView tasks={tasks} now={now} />
+          </>
         )}
       </main>
     </div>
@@ -521,6 +561,17 @@ function StatsView({ tasks, now }: { tasks: Task[]; now: number }) {
     in_progress: tasks.filter(t=>t.status==='in_progress').reduce((s,t)=>s+(t.accumulatedMs??0)+(t.startedAt? now - t.startedAt:0),0),
     completed: tasks.filter(t=>t.status==='completed').reduce((s,t)=>s+(t.accumulatedMs??0),0),
   };
+  const [pomoStats, setPomoStats] = useState<{pomoCount:number}>(()=>({pomoCount:0}));
+  const [period, setPeriod] = useState<'day'|'week'|'month'>('day');
+  useEffect(()=>{
+    try{
+      const raw = localStorage.getItem('todo-kanban:pomodoro-settings');
+      if(raw){
+        const v = JSON.parse(raw);
+        if(typeof v.pomoCount==='number') setPomoStats({pomoCount:v.pomoCount});
+      }
+    }catch{}
+  },[]);
   const top = [...tasks]
     .map(t=>({
       id:t.id,title:t.title,
@@ -530,39 +581,46 @@ function StatsView({ tasks, now }: { tasks: Task[]; now: number }) {
     .slice(0,5);
   return (
     <section className="grid grid-cols-1 gap-4">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-slate-500">Dönem:</span>
+        <div className="flex gap-2">
+          {(['day','week','month'] as const).map(p => (
+            <button
+              key={p}
+              className={`rounded-full px-3 py-1 text-xs ${period===p? 'bg-slate-900 text-white':'border border-slate-300 bg-white text-slate-700'}`}
+              onClick={()=>setPeriod(p)}
+            >
+              {p==='day'?'Günlük':p==='week'?'Haftalık':'Aylık'}
+            </button>
+          ))}
+        </div>
+        <span className="ml-2 text-[11px] text-slate-400">(Şu an veriler toplam süreden hesaplanıyor)</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-white p-4">
           <div className="text-xs text-slate-500">Toplam Süre</div>
           <div className="mt-1 text-2xl font-semibold tabular-nums">{formatDuration(totalMs)}</div>
         </div>
         <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs text-slate-500">To Do</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.todo}</div>
-          <div className="mt-1 text-[11px] text-slate-500">Süre: {formatDuration(byStatusMs.todo)}</div>
-        </div>
-        <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs text-slate-500">In Progress</div>
-          <div className="mt-1 text-2xl font-semibold">{counts.in_progress}</div>
-          <div className="mt-1 text-[11px] text-slate-500">Süre: {formatDuration(byStatusMs.in_progress)}</div>
-        </div>
-        <div className="rounded-xl border bg-white p-4">
           <div className="text-xs text-slate-500">Completed</div>
           <div className="mt-1 text-2xl font-semibold">{counts.completed}</div>
-          <div className="mt-1 text-[11px] text-slate-500">Süre: {formatDuration(byStatusMs.completed)}</div>
+          <div className="mt-1 text-[11px] text-slate-500">Toplam süre: {formatDuration(byStatusMs.completed)}</div>
+        </div>
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs text-slate-500">Pomodoro Sayısı</div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums">{pomoStats.pomoCount}</div>
         </div>
       </div>
-
-      <div className="rounded-xl border bg-white p-4">
-        <div className="text-sm font-semibold">En Uzun Süre Alan 5 Görev</div>
-        <ul className="mt-2 space-y-2">
-          {top.length === 0 && <li className="text-xs text-slate-500">Henüz görev yok</li>}
-          {top.map(item => (
-            <li key={item.id} className="flex items-center justify-between gap-2 text-sm">
-              <span className="truncate">{item.title}</span>
-              <span className="tabular-nums text-slate-600 text-xs">{formatDuration(item.ms)}</span>
-            </li>
-          ))}
-        </ul>
+      {/* Önerilen yeni kartlar: ileride oturum kaydı eklendiğinde doldurulacak */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-sm font-semibold">Günlük Hedef (Pomodoro)</div>
+          <p className="mt-2 text-xs text-slate-500">Hedef ve gün bazlı takip için oturum kaydı eklenmeli.</p>
+        </div>
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-sm font-semibold">Etiket/Proje Kırılımı</div>
+          <p className="mt-2 text-xs text-slate-500">Etiketler eklendikten sonra süre dağılımı burada gösterilebilir.</p>
+        </div>
       </div>
     </section>
   );
@@ -578,6 +636,8 @@ function AddPanel({
   dailyItems,
   removeDaily,
   totalMs,
+  onBreakChange,
+  onPostBreakHoldChange,
 }: {
   title: string;
   setTitle: (v: string) => void;
@@ -588,13 +648,102 @@ function AddPanel({
   dailyItems: DailyItem[];
   removeDaily: (id: string) => void;
   totalMs: number;
+  onBreakChange: (active: boolean) => void;
+  onPostBreakHoldChange: (hold: boolean) => void;
 }) {
   const POMODORO_DEFAULT = 25 * 60 * 1000;
   const BREAK_DEFAULT = 5 * 60 * 1000;
+  const LONG_BREAK_DEFAULT = 15 * 60 * 1000;
+  const POMO_KEY = 'todo-kanban:pomodoro-settings';
+  const [pomoDuration, setPomoDuration] = useState(POMODORO_DEFAULT);
+  const [breakDuration, setBreakDuration] = useState(BREAK_DEFAULT);
+  const [pomoRunning, setPomoRunning] = useState(false);
+  const [pomoLeft, setPomoLeft] = useState(POMODORO_DEFAULT);
+  const [breakRunning, setBreakRunning] = useState(false);
+  const [breakLeft, setBreakLeft] = useState(BREAK_DEFAULT);
+  const lastTickRef = useRef<number>(Date.now());
+  const [showPomoDone, setShowPomoDone] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [longBreakDuration, setLongBreakDuration] = useState(LONG_BREAK_DEFAULT);
+  const [longBreakEvery, setLongBreakEvery] = useState(4);
+  const [showBreakConfirm, setShowBreakConfirm] = useState(false);
+  const [pomoCount, setPomoCount] = useState(0);
+  const [showBreakDone, setShowBreakDone] = useState(false);
+  // notify parent when break toggle changes
+  useEffect(() => {
+    onBreakChange(breakRunning);
+  }, [breakRunning, onBreakChange]);
+
+  // Load persisted settings on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(POMO_KEY);
+      if (!raw) return;
+      const v = JSON.parse(raw);
+      if (typeof v.pomoDuration === 'number') {
+        setPomoDuration(v.pomoDuration);
+        if (!pomoRunning) setPomoLeft(v.pomoDuration);
+      }
+      if (typeof v.breakDuration === 'number') {
+        setBreakDuration(v.breakDuration);
+        if (!breakRunning) setBreakLeft(v.breakDuration);
+      }
+      if (typeof v.longBreakDuration === 'number') setLongBreakDuration(v.longBreakDuration);
+      if (typeof v.longBreakEvery === 'number') setLongBreakEvery(v.longBreakEvery);
+      if (typeof v.pomoCount === 'number') setPomoCount(v.pomoCount);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist settings and counters
+  useEffect(() => {
+    try {
+      const data = { pomoDuration, breakDuration, longBreakDuration, longBreakEvery, pomoCount };
+      localStorage.setItem(POMO_KEY, JSON.stringify(data));
+    } catch {}
+  }, [pomoDuration, breakDuration, longBreakDuration, longBreakEvery, pomoCount]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = Date.now();
+      const delta = now - lastTickRef.current;
+      lastTickRef.current = now;
+      if (pomoRunning) {
+        setPomoLeft((ms) => {
+          const next = Math.max(0, ms - delta);
+          if (next === 0) {
+            setPomoRunning(false);
+            setPomoCount((c) => c + 1);
+            setShowPomoDone(true);
+          }
+          return next;
+        });
+      } else if (breakRunning) {
+        setBreakLeft((ms) => {
+          const next = Math.max(0, ms - delta);
+          if (next === 0) {
+            setBreakRunning(false);
+            setBreakLeft(breakDuration);
+            setShowBreakDone(true);
+            onPostBreakHoldChange(true);
+          }
+          return next;
+        });
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [pomoRunning, breakRunning, breakDuration, onPostBreakHoldChange]);
   return (
     <section className="flex flex-col rounded-xl border bg-white">
-      <header className="border-b px-4 py-2">
+      <header className="border-b px-4 py-2 flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Yeni Görev</h2>
+        <button
+          className="rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-100"
+          title="Ayarlar"
+          onClick={() => setShowSettings((v) => !v)}
+        >
+          ⚙️
+        </button>
       </header>
       <div className="flex items-center justify-center gap-8 py-4">
         <div className="flex h-40 w-40 items-center justify-center rounded-full bg-white shadow-md ring-4 ring-sky-200">
@@ -604,23 +753,237 @@ function AddPanel({
         </div>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col items-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow ring-2 ring-sky-200">
-              <span className="text-xs leading-none font-medium text-slate-700 tabular-nums">
-                {formatMMSS(POMODORO_DEFAULT)}
+            <div
+              className={
+                'group relative flex h-16 w-16 items-center justify-center rounded-full bg-white shadow ring-2 ' +
+                (pomoRunning ? 'ring-sky-300' : 'ring-sky-200')
+              }
+            >
+              <span className="text-xs leading-none font-medium text-slate-700 tabular-nums select-none transition-opacity group-hover:opacity-0">
+                {formatMMSS(pomoLeft)}
               </span>
+              <button
+                className="absolute inset-0 hidden items-center justify-center rounded-full bg-slate-900/60 text-white group-hover:flex backdrop-blur-sm"
+                title={pomoRunning ? 'Durdur' : 'Başlat'}
+                aria-label={pomoRunning ? 'Durdur' : 'Başlat'}
+                onClick={() => {
+                  if (pomoRunning) {
+                    setPomoRunning(false);
+                    return;
+                  }
+                  if (breakRunning) {
+                    setShowBreakConfirm(true);
+                    return;
+                  }
+                  setBreakRunning(false);
+                  lastTickRef.current = Date.now();
+                  setPomoRunning(true);
+                }}
+              >
+                <span className="text-sm leading-none">
+                  {pomoRunning ? '❚❚' : '▶'}
+                </span>
+              </button>
             </div>
             <span className="mt-1 text-[11px] text-slate-500">Pomodoro</span>
           </div>
           <div className="flex flex-col items-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow ring-2 ring-sky-200">
+            <div className={"flex h-16 w-16 items-center justify-center rounded-full bg-white shadow ring-2 " + (breakRunning ? 'ring-emerald-300' : 'ring-emerald-200')}>
               <span className="text-xs leading-none font-medium text-slate-700 tabular-nums">
-                {formatMMSS(BREAK_DEFAULT)}
+                {formatMMSS(breakLeft)}
               </span>
             </div>
             <span className="mt-1 text-[11px] text-slate-500">Dinlenme</span>
           </div>
         </div>
       </div>
+
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm"
+          onClick={() => setShowSettings(false)}
+        >
+          <div
+            className="w-[92%] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-base font-semibold text-slate-800">Pomodoro Ayarları</div>
+              <button
+                className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100"
+                onClick={() => setShowSettings(false)}
+                aria-label="Kapat"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-3 space-y-3 text-sm">
+              <label className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">Pomodoro (dk)</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right"
+                  defaultValue={Math.round(pomoDuration / 60000)}
+                  onBlur={(e) => {
+                    const m = Math.max(1, Number(e.currentTarget.value) || 25);
+                    const ms = m * 60000;
+                    setPomoDuration(ms);
+                    if (!pomoRunning) setPomoLeft(ms);
+                  }}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">Dinlenme (dk)</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right"
+                  defaultValue={Math.round(breakDuration / 60000)}
+                  onBlur={(e) => {
+                    const m = Math.max(1, Number(e.currentTarget.value) || 5);
+                    const ms = m * 60000;
+                    setBreakDuration(ms);
+                    if (!breakRunning) setBreakLeft(ms);
+                  }}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">Uzun Dinlenme (dk)</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right"
+                  defaultValue={Math.round(longBreakDuration / 60000)}
+                  onBlur={(e) => {
+                    const m = Math.max(1, Number(e.currentTarget.value) || 15);
+                    const ms = m * 60000;
+                    setLongBreakDuration(ms);
+                  }}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">Uzun dinlenme kaç pomodoro sonra</span>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right"
+                  defaultValue={longBreakEvery}
+                  onBlur={(e) => {
+                    const v = Math.max(1, Number(e.currentTarget.value) || 4);
+                    setLongBreakEvery(v);
+                  }}
+                />
+              </label>
+              
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPomoDone && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+          <div className="w-[90%] max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="text-lg font-semibold">Pomodoro tamamlandı</div>
+            <p className="mt-1 text-sm text-slate-600">Kısa bir mola zamanı. Dinlenmeye geçmek ister misin?</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700"
+                onClick={() => { setShowPomoDone(false); setPomoLeft(pomoDuration); }}
+              >
+                Daha sonra
+              </button>
+              <button
+                className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                onClick={() => {
+                  setShowPomoDone(false);
+                  setPomoLeft(pomoDuration);
+                  setBreakLeft(breakDuration);
+                  setPomoRunning(false);
+                  setBreakRunning(true);
+                  lastTickRef.current = Date.now();
+                }}
+              >
+                Kısa dinlenmeye geç
+              </button>
+              {(/* pomoCount state to be used */ true) && (pomoCount > 0 && pomoCount % longBreakEvery === 0) && (
+                <button
+                  className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                  onClick={() => {
+                  setShowPomoDone(false);
+                  setPomoLeft(pomoDuration);
+                  setBreakLeft(longBreakDuration);
+                  setPomoRunning(false);
+                  setBreakRunning(true);
+                  lastTickRef.current = Date.now();
+                }}
+              >
+                  Uzun dinlenmeye geç
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBreakConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowBreakConfirm(false)}>
+          <div className="w-[90%] max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-lg font-semibold">Dinlenmedesin</div>
+            <p className="mt-1 text-sm text-slate-600">Pomodoro’ya geçmek istiyor musun?</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700"
+                onClick={() => setShowBreakConfirm(false)}
+              >
+                İptal
+              </button>
+              <button
+                className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+                onClick={() => {
+                  setShowBreakConfirm(false);
+                  setBreakRunning(false);
+                  setBreakLeft(breakDuration);
+                  setPomoLeft(pomoDuration);
+                  setPomoRunning(true);
+                  lastTickRef.current = Date.now();
+                }}
+              >
+                Pomodoro’ya geç
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBreakDone && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+          <div className="w-[90%] max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="text-lg font-semibold">Dinlenme bitti</div>
+            <p className="mt-1 text-sm text-slate-600">Yeni bir Pomodoro başlatmak ister misin?</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700"
+                onClick={() => { setShowBreakDone(false); /* hold remains true; user manuel başlatır */ }}
+              >
+                Vazgeç
+              </button>
+              <button
+                className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+                onClick={() => {
+                  setShowBreakDone(false);
+                  setPomoLeft(pomoDuration);
+                  setPomoRunning(true);
+                  lastTickRef.current = Date.now();
+                  onPostBreakHoldChange(false);
+                }}
+              >
+                Yeni Pomodoro başlat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="p-3 flex flex-col gap-2">
         <input
           value={title}
