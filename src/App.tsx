@@ -21,6 +21,9 @@ type Task = {
   status: Status;
   origin?: 'manual' | 'daily';
   originId?: string;
+  startedAt?: number | null;
+  accumulatedMs?: number;
+  paused?: boolean;
 };
 
 type DailyItem = {
@@ -38,6 +41,34 @@ const STORAGE_KEY = 'todo-kanban:tasks';
 const DAILY_KEY = 'todo-kanban:daily-items';
 const LAST_SEED_KEY = 'todo-kanban:last-seed-date';
 
+function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const hh = h.toString().padStart(2, '0');
+  const mm = m.toString().padStart(2, '0');
+  const ss = s.toString().padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function transitionTask(t: Task, status: Status, at: number): Task {
+  if (t.status === status) {
+    if (status === 'in_progress') {
+      return { ...t, startedAt: t.startedAt ?? at, accumulatedMs: t.accumulatedMs ?? 0 };
+    }
+    return t;
+  }
+  if (t.status === 'in_progress' && status !== 'in_progress') {
+    const acc = (t.accumulatedMs ?? 0) + (t.startedAt ? at - t.startedAt : 0);
+    return { ...t, status, accumulatedMs: acc, startedAt: null };
+  }
+  if (t.status !== 'in_progress' && status === 'in_progress') {
+    return { ...t, status, startedAt: at, accumulatedMs: t.accumulatedMs ?? 0 };
+  }
+  return { ...t, status };
+}
+
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [title, setTitle] = useState('');
@@ -45,6 +76,7 @@ export default function App() {
   const [dailyTitle, setDailyTitle] = useState('');
   const [dailyItems, setDailyItems] = useState<DailyItem[]>([]);
   const [panelTitle, setPanelTitle] = useState('');
+  const [now, setNow] = useState(() => Date.now());
 
   const sensors = useSensors(
     // Mouse: anında aktivasyon (daha seri his)
@@ -77,6 +109,45 @@ export default function App() {
     } catch {}
   }, [dailyItems]);
 
+  // Tick timers every second
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Ensure only the topmost non-paused in-progress task runs (others paused or below are stopped)
+  useEffect(() => {
+    const firstInProgress = tasks.find((t) => t.status === 'in_progress' && !t.paused);
+    if (!firstInProgress) return; // none running
+    const runnerId = firstInProgress.id;
+    const at = Date.now();
+    let changed = false;
+    const next = tasks.map((t) => {
+      if (t.status !== 'in_progress') return t;
+      if (t.id === runnerId) {
+        if (t.paused) return t; // don't auto start paused
+        if (!t.startedAt) {
+          changed = true;
+          return { ...t, startedAt: at, accumulatedMs: t.accumulatedMs ?? 0 };
+        }
+        return t;
+      }
+      if (t.startedAt) {
+        const acc = (t.accumulatedMs ?? 0) + (t.startedAt ? at - t.startedAt : 0);
+        changed = true;
+        return { ...t, startedAt: null, accumulatedMs: acc };
+      }
+      return t;
+    });
+    if (changed) setTasks(next);
+  }, [tasks]);
+
+  // Tick each second to update timers
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   // Seed daily items once per day into To Do
   useEffect(() => {
     try {
@@ -94,6 +165,9 @@ export default function App() {
             status: 'todo' as const,
             origin: 'daily' as const,
             originId: d.id,
+            startedAt: null,
+            accumulatedMs: 0,
+            paused: false,
           })),
           ...prev,
         ]);
@@ -127,7 +201,7 @@ export default function App() {
     if (!trimmed) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setTasks((prev) => [
-      { id, title: trimmed, status: 'todo', origin: 'manual' },
+      { id, title: trimmed, status: 'todo', origin: 'manual', startedAt: null, accumulatedMs: 0, paused: false },
       ...prev,
     ]);
     setTitle('');
@@ -138,14 +212,15 @@ export default function App() {
     if (!trimmed) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setTasks((prev) => [
-      { id, title: trimmed, status: 'todo', origin: 'manual' },
+      { id, title: trimmed, status: 'todo', origin: 'manual', startedAt: null, accumulatedMs: 0, paused: false },
       ...prev,
     ]);
     setPanelTitle('');
   }
 
   function updateStatus(id: string, status: Status) {
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
+    const at = Date.now();
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...transitionTask(t, status, at), paused: status === 'in_progress' ? false : t.paused } : t)));
   }
 
   function removeTask(id: string) {
@@ -194,6 +269,9 @@ export default function App() {
             status: 'todo' as const,
             origin: 'daily' as const,
             originId: id,
+            startedAt: null,
+            accumulatedMs: 0,
+            paused: false,
           },
           ...prev,
         ]);
@@ -231,7 +309,7 @@ export default function App() {
       setTasks((prev) => {
         const fromIndex = prev.findIndex((t) => t.id === activeId);
         if (fromIndex === -1) return prev;
-        const item = { ...prev[fromIndex], status: overTask.status } as Task;
+        const item = { ...transitionTask(prev[fromIndex], overTask.status as Status, Date.now()), paused: overTask.status === 'in_progress' ? false : prev[fromIndex].paused };
         const arr = prev.slice();
         arr.splice(fromIndex, 1);
         let toIndex = arr.findIndex((t) => t.id === overTask.id);
@@ -285,6 +363,7 @@ export default function App() {
               addDaily={addDaily}
               dailyItems={dailyItems}
               removeDaily={removeDaily}
+              totalMs={tasks.reduce((sum, t) => sum + (t.accumulatedMs ?? 0) + (t.status === 'in_progress' && t.startedAt ? now - t.startedAt : 0), 0)}
             />
             {STATUSES.map((s) => (
               <KanbanColumn
@@ -300,6 +379,23 @@ export default function App() {
                     onRemove={() => removeTask(t.id)}
                     onUpdateTitle={(next) => updateTitle(t.id, next)}
                     activeId={activeId}
+                    now={now}
+                    topInProgressId={tasks.find((x) => x.status === 'in_progress')?.id || null}
+                    onToggleRun={() => {
+                      setTasks((prev) => prev.map((x) => {
+                        if (x.id !== t.id) return x;
+                        if (x.status !== 'in_progress') return x;
+                        const at = Date.now();
+                        if (x.paused || !x.startedAt) {
+                          // resume
+                          return { ...x, paused: false, startedAt: at };
+                        } else {
+                          // pause
+                          const acc = (x.accumulatedMs ?? 0) + (x.startedAt ? at - x.startedAt : 0);
+                          return { ...x, startedAt: null, accumulatedMs: acc, paused: true };
+                        }
+                      }));
+                    }}
                   />
                 ))}
                 {grouped[s.key].length === 0 && (
@@ -363,6 +459,7 @@ function AddPanel({
   addDaily,
   dailyItems,
   removeDaily,
+  totalMs,
 }: {
   title: string;
   setTitle: (v: string) => void;
@@ -372,11 +469,17 @@ function AddPanel({
   addDaily: () => void;
   dailyItems: DailyItem[];
   removeDaily: (id: string) => void;
+  totalMs: number;
 }) {
   return (
     <section className="flex flex-col rounded-xl border bg-white">
       <header className="border-b px-4 py-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Yeni Görev</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Yeni Görev</h2>
+          <div className="text-[11px] tabular-nums text-slate-500" title="Toplam süre">
+            Toplam: {formatDuration(totalMs)}
+          </div>
+        </div>
       </header>
       <div className="p-3 flex flex-col gap-2">
         <input
@@ -466,11 +569,17 @@ const TaskCard = memo(function TaskCard({
   onRemove,
   onUpdateTitle,
   activeId,
+  now,
+  topInProgressId,
+  onToggleRun,
 }: {
   task: Task;
   onRemove: () => void;
   onUpdateTitle: (next: string) => void;
   activeId: string | null;
+  now: number;
+  topInProgressId: string | null;
+  onToggleRun: () => void;
 }) {
   const { attributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({ id: task.id });
   const { setNodeRef: setDropRef } = useDroppable({ id: task.id });
@@ -515,16 +624,38 @@ const TaskCard = memo(function TaskCard({
           {task.status === 'completed' && (
             <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs border border-emerald-300" title="Tamamlandı">✓</span>
           )}
-          {task.status === 'in_progress' && (
-            <span
+          {task.status === 'in_progress' && task.id === topInProgressId && (
+            <button
               className={
-                'relative shrink-0 inline-flex h-5 w-5 items-center justify-center ' +
+                'shrink-0 inline-flex h-5 w-5 items-center justify-center ' +
                 (task.origin === 'daily' ? 'text-amber-300' : 'text-sky-400')
               }
-              title="Çalışıyor"
+              title={task.paused || !task.startedAt ? 'Başlat' : 'Durdur'}
+              aria-label={task.paused || !task.startedAt ? 'Başlat' : 'Durdur'}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleRun();
+              }}
             >
-              <span className="pointer-events-none absolute inset-0 rounded-full border border-current opacity-40" />
-              <span className="relative block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              {task.paused || !task.startedAt ? (
+                <span className="block leading-none text-[12px]">▶</span>
+              ) : (
+                <span className="relative inline-flex h-5 w-5 items-center justify-center">
+                  <span className="pointer-events-none absolute inset-0 rounded-full border border-current opacity-40" />
+                  <span className="relative block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                </span>
+              )}
+            </button>
+          )}
+          {task.status === 'in_progress' && task.id !== topInProgressId && (
+            <span
+              className="shrink-0 inline-flex h-5 w-5 items-center justify-center text-slate-300"
+              title="Sırada"
+            >
+              <span className="block h-4 w-4 rounded-full border-2 border-current" />
             </span>
           )}
           <div className="flex-1 flex items-center gap-2 min-w-0">
@@ -555,7 +686,11 @@ const TaskCard = memo(function TaskCard({
                 {task.title}
               </h3>
             )}
-            {/* In Progress spinner removed; bottom sliding bar indicates activity */}
+            {task.status === 'in_progress' && task.id === topInProgressId && (
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-500">
+                {formatDuration((task.accumulatedMs ?? 0) + (task.startedAt ? now - task.startedAt : 0))}
+              </span>
+            )}
           </div>
           {task.status === 'todo' && task.origin !== 'daily' && (
             <button
