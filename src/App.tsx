@@ -24,11 +24,18 @@ type Task = {
   startedAt?: number | null;
   accumulatedMs?: number;
   paused?: boolean;
+  subtasks?: SubTask[];
 };
 
 type DailyItem = {
   id: string;
   title: string;
+};
+
+type SubTask = {
+  id: string;
+  title: string;
+  done: boolean;
 };
 
 const STATUSES: { key: Status; label: string }[] = [
@@ -77,6 +84,7 @@ export default function App() {
   const [dailyItems, setDailyItems] = useState<DailyItem[]>([]);
   const [panelTitle, setPanelTitle] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  const [view, setView] = useState<'board' | 'stats'>('board');
 
   const sensors = useSensors(
     // Mouse: anında aktivasyon (daha seri his)
@@ -168,6 +176,7 @@ export default function App() {
             startedAt: null,
             accumulatedMs: 0,
             paused: false,
+            subtasks: [],
           })),
           ...prev,
         ]);
@@ -201,7 +210,7 @@ export default function App() {
     if (!trimmed) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setTasks((prev) => [
-      { id, title: trimmed, status: 'todo', origin: 'manual', startedAt: null, accumulatedMs: 0, paused: false },
+      { id, title: trimmed, status: 'todo', origin: 'manual', startedAt: null, accumulatedMs: 0, paused: false, subtasks: [] },
       ...prev,
     ]);
     setTitle('');
@@ -212,7 +221,7 @@ export default function App() {
     if (!trimmed) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setTasks((prev) => [
-      { id, title: trimmed, status: 'todo', origin: 'manual', startedAt: null, accumulatedMs: 0, paused: false },
+      { id, title: trimmed, status: 'todo', origin: 'manual', startedAt: null, accumulatedMs: 0, paused: false, subtasks: [] },
       ...prev,
     ]);
     setPanelTitle('');
@@ -247,6 +256,28 @@ export default function App() {
     }
   }
 
+  // Subtasks
+  function addSubtask(taskId: string, title: string) {
+    const t = title.trim();
+    if (!t) return;
+    const sid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, subtasks: [...(x.subtasks ?? []), { id: sid, title: t, done: false }] } : x)));
+  }
+
+  function toggleSubtask(taskId: string, subId: string) {
+    setTasks((prev) =>
+      prev.map((x) =>
+        x.id === taskId
+          ? { ...x, subtasks: (x.subtasks ?? []).map((s) => (s.id === subId ? { ...s, done: !s.done } : s)) }
+          : x
+      )
+    );
+  }
+
+  function removeSubtask(taskId: string, subId: string) {
+    setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, subtasks: (x.subtasks ?? []).filter((s) => s.id !== subId) } : x)));
+  }
+
   function addDaily() {
     const trimmed = dailyTitle.trim();
     if (!trimmed) return;
@@ -272,6 +303,7 @@ export default function App() {
             startedAt: null,
             accumulatedMs: 0,
             paused: false,
+            subtasks: [],
           },
           ...prev,
         ]);
@@ -327,26 +359,26 @@ export default function App() {
     <div className="min-h-screen">
       <header className="border-b bg-white/70 backdrop-blur sticky top-0 z-10">
         <div className="mx-auto max-w-screen-2xl px-4 py-4 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Todo Kanban</h1>
-          <div className="ml-auto flex gap-2">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addTask()}
-              placeholder="Yeni görev başlığı..."
-              className="w-64 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-500"
-            />
+          <h1 className="text-2xl font-semibold">Todo</h1>
+          <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={addTask}
-              className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700"
+              onClick={() => setView('board')}
+              className={`rounded-md px-3 py-2 text-sm font-medium ${view === 'board' ? 'bg-slate-900 text-white' : 'bg-white border border-slate-300 text-slate-700'}`}
             >
-              Ekle
+              Board
+            </button>
+            <button
+              onClick={() => setView('stats')}
+              className={`rounded-md px-3 py-2 text-sm font-medium ${view === 'stats' ? 'bg-slate-900 text-white' : 'bg-white border border-slate-300 text-slate-700'}`}
+            >
+              İstatistikler
             </button>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-screen-2xl px-4 py-6">
+        {view === 'board' ? (
         <DndContext
           sensors={sensors}
           onDragStart={onDragStart}
@@ -396,6 +428,9 @@ export default function App() {
                         }
                       }));
                     }}
+                    onAddSubtask={(title) => addSubtask(t.id, title)}
+                    onToggleSubtask={(subId) => toggleSubtask(t.id, subId)}
+                    onRemoveSubtask={(subId) => removeSubtask(t.id, subId)}
                   />
                 ))}
                 {grouped[s.key].length === 0 && (
@@ -414,6 +449,9 @@ export default function App() {
             {activeTask ? <CardGhost task={activeTask} /> : null}
           </DragOverlay>
         </DndContext>
+        ) : (
+          <StatsView tasks={tasks} now={now} />
+        )}
       </main>
     </div>
   );
@@ -450,6 +488,65 @@ const KanbanColumn = memo(function KanbanColumn({
   );
 });
 
+function StatsView({ tasks, now }: { tasks: Task[]; now: number }) {
+  const totalMs = tasks.reduce((sum, t) => sum + (t.accumulatedMs ?? 0) + (t.status === 'in_progress' && t.startedAt ? now - t.startedAt : 0), 0);
+  const counts = {
+    todo: tasks.filter(t => t.status === 'todo').length,
+    in_progress: tasks.filter(t => t.status === 'in_progress').length,
+    completed: tasks.filter(t => t.status === 'completed').length,
+  };
+  const byStatusMs = {
+    todo: tasks.filter(t=>t.status==='todo').reduce((s,t)=>s+(t.accumulatedMs??0),0),
+    in_progress: tasks.filter(t=>t.status==='in_progress').reduce((s,t)=>s+(t.accumulatedMs??0)+(t.startedAt? now - t.startedAt:0),0),
+    completed: tasks.filter(t=>t.status==='completed').reduce((s,t)=>s+(t.accumulatedMs??0),0),
+  };
+  const top = [...tasks]
+    .map(t=>({
+      id:t.id,title:t.title,
+      ms:(t.accumulatedMs??0)+(t.status==='in_progress'&&t.startedAt? now-t.startedAt:0)
+    }))
+    .sort((a,b)=>b.ms-a.ms)
+    .slice(0,5);
+  return (
+    <section className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs text-slate-500">Toplam Süre</div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums">{formatDuration(totalMs)}</div>
+        </div>
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs text-slate-500">To Do</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.todo}</div>
+          <div className="mt-1 text-[11px] text-slate-500">Süre: {formatDuration(byStatusMs.todo)}</div>
+        </div>
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs text-slate-500">In Progress</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.in_progress}</div>
+          <div className="mt-1 text-[11px] text-slate-500">Süre: {formatDuration(byStatusMs.in_progress)}</div>
+        </div>
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs text-slate-500">Completed</div>
+          <div className="mt-1 text-2xl font-semibold">{counts.completed}</div>
+          <div className="mt-1 text-[11px] text-slate-500">Süre: {formatDuration(byStatusMs.completed)}</div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border bg-white p-4">
+        <div className="text-sm font-semibold">En Uzun Süre Alan 5 Görev</div>
+        <ul className="mt-2 space-y-2">
+          {top.length === 0 && <li className="text-xs text-slate-500">Henüz görev yok</li>}
+          {top.map(item => (
+            <li key={item.id} className="flex items-center justify-between gap-2 text-sm">
+              <span className="truncate">{item.title}</span>
+              <span className="tabular-nums text-slate-600 text-xs">{formatDuration(item.ms)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 function AddPanel({
   title,
   setTitle,
@@ -474,13 +571,15 @@ function AddPanel({
   return (
     <section className="flex flex-col rounded-xl border bg-white">
       <header className="border-b px-4 py-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Yeni Görev</h2>
-          <div className="text-[11px] tabular-nums text-slate-500" title="Toplam süre">
-            Toplam: {formatDuration(totalMs)}
-          </div>
-        </div>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">Yeni Görev</h2>
       </header>
+      <div className="flex items-center justify-center py-4">
+        <div className="flex h-40 w-40 items-center justify-center rounded-full bg-white shadow-md ring-4 ring-sky-200">
+          <span className="text-2xl leading-none font-semibold text-slate-700 tabular-nums">
+            {formatDuration(totalMs)}
+          </span>
+        </div>
+      </div>
       <div className="p-3 flex flex-col gap-2">
         <input
           value={title}
@@ -572,6 +671,9 @@ const TaskCard = memo(function TaskCard({
   now,
   topInProgressId,
   onToggleRun,
+  onAddSubtask,
+  onToggleSubtask,
+  onRemoveSubtask,
 }: {
   task: Task;
   onRemove: () => void;
@@ -580,6 +682,9 @@ const TaskCard = memo(function TaskCard({
   now: number;
   topInProgressId: string | null;
   onToggleRun: () => void;
+  onAddSubtask: (title: string) => void;
+  onToggleSubtask: (subId: string) => void;
+  onRemoveSubtask: (subId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef: setDragRef, transform, isDragging } = useDraggable({ id: task.id });
   const { setNodeRef: setDropRef } = useDroppable({ id: task.id });
@@ -602,6 +707,8 @@ const TaskCard = memo(function TaskCard({
     setTemp(task.title);
     setEditing(false);
   };
+  const [openSubs, setOpenSubs] = useState(false);
+  const [subTitle, setSubTitle] = useState('');
 
   return (
     <div ref={setDropRef}>
@@ -686,11 +793,7 @@ const TaskCard = memo(function TaskCard({
                 {task.title}
               </h3>
             )}
-            {task.status === 'in_progress' && task.id === topInProgressId && (
-              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-slate-500">
-                {formatDuration((task.accumulatedMs ?? 0) + (task.startedAt ? now - task.startedAt : 0))}
-              </span>
-            )}
+            {/* Timer moved next to subtasks toggle */}
           </div>
           {task.status === 'todo' && task.origin !== 'daily' && (
             <button
@@ -715,7 +818,85 @@ const TaskCard = memo(function TaskCard({
             ⋮⋮
           </button>
         </div>
-        {/* Static drag hint removed; DragOverlay shows "Taşınıyor…" while dragging */}
+        {/* Subtasks */}
+        <div className="mt-3">
+          <div className="flex items-center justify-between">
+            <button
+              className="text-xs text-slate-500 hover:text-slate-700"
+              onPointerDown={stop}
+              onMouseDown={stop}
+              onTouchStart={stop}
+              onClick={(e) => { e.stopPropagation(); setOpenSubs((v) => !v); }}
+            >
+              {openSubs ? 'Alt görevleri gizle' : `Alt görevler (${(task.subtasks?.filter(s=>s.done).length||0)}/${task.subtasks?.length||0})`}
+            </button>
+            {task.status === 'in_progress' && task.id === topInProgressId && (
+              <span className="shrink-0 text-[11px] tabular-nums text-slate-500">
+                {formatDuration((task.accumulatedMs ?? 0) + (task.startedAt ? now - task.startedAt : 0))}
+              </span>
+            )}
+          </div>
+          {openSubs && (
+            <div className="mt-2 space-y-2">
+              {(task.subtasks ?? []).length === 0 && (
+                <p className="text-[11px] text-slate-400">Henüz alt görev yok</p>
+              )}
+              <ul className="space-y-1">
+                {(task.subtasks ?? []).map((s) => (
+                  <li key={s.id} className="flex items-center gap-2 text-sm">
+                    <button
+                      onPointerDown={stop}
+                      onMouseDown={stop}
+                      onTouchStart={stop}
+                      onClick={(e) => { e.stopPropagation(); onToggleSubtask(s.id); }}
+                      className={
+                        'inline-flex h-4 w-4 items-center justify-center rounded border ' +
+                        (s.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 text-transparent')
+                      }
+                      aria-label={s.done ? 'Alt görev tamamlandı' : 'Alt görevi tamamla'}
+                    >
+                      ✓
+                    </button>
+                    <span className={"flex-1 truncate " + (s.done ? 'line-through text-slate-400' : '')}>{s.title}</span>
+                    <button
+                      onPointerDown={stop}
+                      onMouseDown={stop}
+                      onTouchStart={stop}
+                      onClick={(e) => { e.stopPropagation(); onRemoveSubtask(s.id); }}
+                      className="rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      aria-label="Alt görevi sil"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-center gap-2">
+                <input
+                  value={subTitle}
+                  onChange={(e) => setSubTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { onAddSubtask(subTitle); setSubTitle(''); }
+                  }}
+                  onPointerDown={stop}
+                  onMouseDown={stop}
+                  onTouchStart={stop}
+                  placeholder="Alt görev ekle"
+                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-sky-500"
+                />
+                <button
+                  onPointerDown={stop}
+                  onMouseDown={stop}
+                  onTouchStart={stop}
+                  onClick={(e) => { e.stopPropagation(); onAddSubtask(subTitle); setSubTitle(''); }}
+                  className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700"
+                >
+                  Ekle
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </article>
     </div>
   );
