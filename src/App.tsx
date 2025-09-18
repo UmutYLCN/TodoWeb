@@ -507,16 +507,25 @@ const TaskCard = memo(function TaskCard({
             : task.origin === 'daily'
             ? 'bg-amber-50 border border-amber-300 '
             : 'bg-white border border-slate-200 ') +
-          (task.status === 'in_progress' ? ' relative ' : '') +
           (isActive ? 'opacity-0' : isDragging ? 'opacity-70 shadow-lg' : '')
         }
       >
-        {task.status === 'in_progress' && (
-          <div className="pointer-events-none absolute inset-0 inprogress-ants" />
-        )}
+        {/* In Progress indicator handled near title */}
         <div className="flex items-center gap-2">
           {task.status === 'completed' && (
             <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs border border-emerald-300" title="Tamamlandı">✓</span>
+          )}
+          {task.status === 'in_progress' && (
+            <span
+              className={
+                'relative shrink-0 inline-flex h-5 w-5 items-center justify-center ' +
+                (task.origin === 'daily' ? 'text-amber-300' : 'text-sky-400')
+              }
+              title="Çalışıyor"
+            >
+              <span className="pointer-events-none absolute inset-0 rounded-full border border-current opacity-40" />
+              <span className="relative block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            </span>
           )}
           <div className="flex-1 flex items-center gap-2 min-w-0">
             {editing ? (
